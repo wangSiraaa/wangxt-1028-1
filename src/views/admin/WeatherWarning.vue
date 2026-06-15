@@ -41,7 +41,7 @@
             </div>
           </el-card>
         </el-col>
-      </el-col>
+      </el-row>
 
       <el-empty v-if="weatherWarnings.length === 0" description="暂无天气预警" />
     </div>

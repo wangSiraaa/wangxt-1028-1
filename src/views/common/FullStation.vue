@@ -7,13 +7,13 @@
       </h2>
 
       <el-alert
-        title="演示：归还时选择已满站点S004，自动推荐S001和S002等有空位的站点"
+        title="演示：归还时选择已满站点S003（C栋宿舍楼站点 25/25），自动推荐有空位的站点"
         type="info"
         :closable="false"
         style="margin-bottom: 20px"
       >
         <template #default>
-          在借还页面也可以看到满站推荐功能
+          所有站点容量状态统一使用 currentCount / capacity 口径判断，与借还页面保持一致
         </template>
       </el-alert>
 
@@ -29,13 +29,18 @@
               <el-table-column label="容量">
                 <template #default="{ row }">
                   <span style="color: #f56c6c; font-weight: 600">
-                    {{ getStationUsed(row.id) }} / {{ row.capacity }}
+                    {{ row.currentCount }} / {{ row.capacity }}
                   </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="空位">
+                <template #default="{ row }">
+                  <span style="color: #f56c6c; font-weight: 600">0</span>
                 </template>
               </el-table-column>
               <el-table-column label="状态">
                 <template #default>
-                  <el-tag type="danger">已满</el-tag>
+                  <el-tag type="danger">已饱和</el-tag>
                 </template>
               </el-table-column>
             </el-table>
@@ -87,12 +92,12 @@
                     <template #header>
                       <div style="display: flex; justify-content: space-between; align-items: center">
                         <span style="font-weight: 600">{{ s.name }}</span>
-                        <el-tag type="success">{{ getStationUsed(s.id) }} / {{ s.capacity }}</el-tag>
+                        <el-tag type="success">{{ s.currentCount }} / {{ s.capacity }}</el-tag>
                       </div>
                     </template>
                     <p><el-icon><Location /></el-icon> {{ s.location }}</p>
                     <p><el-icon><Clock /></el-icon> 距离: <b>{{ getDistance(s.id, form.fromStationId) }}米</b></p>
-                    <p><el-icon><Umbrella /></el-icon> 可用: <b style="color: #67c23a">{{ s.capacity - getStationUsed(s.id) }} 把</b></p>
+                    <p><el-icon><Umbrella /></el-icon> 空位: <b style="color: #67c23a">{{ s.capacity - s.currentCount }} 把</b></p>
                     <el-button type="primary" size="small" style="width: 100%; margin-top: 10px" @click="selectStation(s)">
                       选择此站点
                     </el-button>
@@ -133,15 +138,20 @@
               <div style="display: flex; justify-content: space-between; align-items: center">
                 <span style="font-weight: 600">{{ s.name }}</span>
                 <el-tag :type="isFullStation(s.id) ? 'danger' : isAlmostFull(s.id) ? 'warning' : 'success'">
-                  {{ isFullStation(s.id) ? '已满' : isAlmostFull(s.id) ? '紧张' : '充足' }}
+                  {{ isFullStation(s.id) ? '已饱和' : isAlmostFull(s.id) ? '紧张' : '充足' }}
                 </el-tag>
               </div>
             </template>
             <p><el-icon><Location /></el-icon> {{ s.location }}</p>
             <p><el-icon><Umbrella /></el-icon> 容量: {{ s.capacity }} 把</p>
-            <p><el-icon><Checked /></el-icon> 已占用: {{ getStationUsed(s.id) }} 把</p>
+            <p><el-icon><Checked /></el-icon> 已占用: {{ s.currentCount }} 把</p>
+            <p style="color: #909399; margin-top: 10px">
+              空位: <b :style="{ color: (s.capacity - s.currentCount) === 0 ? '#f56c6c' : '#67c23a' }">
+                {{ s.capacity - s.currentCount }} 把
+              </b>
+            </p>
             <el-progress 
-              :percentage="Math.round(getStationUsed(s.id) / s.capacity * 100)" 
+              :percentage="Math.round(s.currentCount / s.capacity * 100)" 
               :status="isFullStation(s.id) ? 'exception' : isAlmostFull(s.id) ? 'warning' : ''"
             />
           </el-card>
@@ -164,25 +174,20 @@ const borrowableUmbrellas = computed(() =>
   store.umbrellas.filter(u => u.status === 'borrowed')
 )
 
-const form = ref({ fromStationId: 'S004', umbrellaId: '' })
+const form = ref({ fromStationId: 'S003', umbrellaId: '' })
 
 const fullStations = computed(() => stations.value.filter(s => isFullStation(s.id)))
-
-const getStationUsed = (stationId) => {
-  return store.umbrellas.filter(u => u.stationId === stationId && u.status !== 'borrowed' && u.status !== 'lost').length
-}
 
 const isFullStation = (stationId) => {
   const s = getStationById(stationId)
   if (!s) return false
-  return getStationUsed(stationId) >= s.capacity
+  return s.currentCount >= s.capacity
 }
 
 const isAlmostFull = (stationId) => {
   const s = getStationById(stationId)
   if (!s) return false
-  const used = getStationUsed(stationId)
-  return used >= s.capacity * 0.8 && used < s.capacity
+  return s.currentCount >= s.capacity * 0.8 && s.currentCount < s.capacity
 }
 
 const recommendedStations = computed(() => {
