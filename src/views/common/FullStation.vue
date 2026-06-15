@@ -7,13 +7,14 @@
       </h2>
 
       <el-alert
-        title="演示：归还时选择已满站点S003（C栋宿舍楼站点 25/25），自动推荐有空位的站点"
-        type="info"
+        title="推荐算法升级：综合可达区域、剩余空位、距离多维度打分"
+        type="success"
         :closable="false"
+        show-icon
         style="margin-bottom: 20px"
       >
         <template #default>
-          所有站点容量状态统一使用 currentCount / capacity 口径判断，与借还页面保持一致
+          推荐排序不再只看距离，而是综合打分：<b>员工可达区域(+100)</b> + <b>同区域(+50)</b> + <b>空位数量(0-30)</b> - <b>距离×0.1</b>，自动过滤不可达站点。
         </template>
       </el-alert>
 
@@ -34,7 +35,7 @@
                 </template>
               </el-table-column>
               <el-table-column label="空位">
-                <template #default="{ row }">
+                <template #default>
                   <span style="color: #f56c6c; font-weight: 600">0</span>
                 </template>
               </el-table-column>
@@ -44,6 +45,29 @@
                 </template>
               </el-table-column>
             </el-table>
+
+            <el-divider />
+
+            <h4 style="margin-bottom: 10px">
+              <el-icon><User /></el-icon>
+              推荐参数
+            </h4>
+            <el-form label-width="100px" size="small">
+              <el-form-item label="当前员工">
+                <el-select v-model="form.employeeId" style="width: 100%" @change="onEmployeeChange">
+                  <el-option
+                    v-for="e in employees"
+                    :key="e.id"
+                    :label="e.id + ' - ' + e.name"
+                    :value="e.id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="可达区域">
+                <el-tag v-for="a in currentEmployeeAreas" :key="a" style="margin-right: 5px">{{ a }}</el-tag>
+                <span v-if="currentEmployeeAreas.length === 0" style="color: #909399">无权限区域</span>
+              </el-form-item>
+            </el-form>
           </div>
         </el-col>
 
@@ -84,26 +108,48 @@
                 </span>
               </div>
               <div class="recommend-desc">
-                该站点已没有空余位置，请选择以下推荐站点归还
+                该站点已没有空余位置，以下是为 <b>{{ getEmployeeById(form.employeeId)?.name }}</b> 推荐的可归还站点（综合可达区域、空位、距离）：
               </div>
               <el-row :gutter="15">
-                <el-col :span="8" v-for="s in recommendedStations" :key="s.id">
+                <el-col :span="8" v-for="(item, idx) in recommendedStations" :key="item.id">
                   <el-card class="station-card" :body-style="{ padding: '15px' }" shadow="hover">
                     <template #header>
                       <div style="display: flex; justify-content: space-between; align-items: center">
-                        <span style="font-weight: 600">{{ s.name }}</span>
-                        <el-tag type="success">{{ s.currentCount }} / {{ s.capacity }}</el-tag>
+                        <div>
+                          <span style="font-weight: 600">{{ item.name }}</span>
+                          <el-tag v-if="idx === 0" type="success" effect="dark" style="margin-left: 6px">最优</el-tag>
+                        </div>
+                        <el-tag type="success">{{ item.station.currentCount }} / {{ item.station.capacity }}</el-tag>
                       </div>
                     </template>
-                    <p><el-icon><Location /></el-icon> {{ s.location }}</p>
-                    <p><el-icon><Clock /></el-icon> 距离: <b>{{ getDistance(s.id, form.fromStationId) }}米</b></p>
-                    <p><el-icon><Umbrella /></el-icon> 空位: <b style="color: #67c23a">{{ s.capacity - s.currentCount }} 把</b></p>
-                    <el-button type="primary" size="small" style="width: 100%; margin-top: 10px" @click="selectStation(s)">
+                    <p><el-icon><Location /></el-icon> {{ item.location }}</p>
+                    <p><el-icon><Clock /></el-icon> 距离: <b>{{ item.distance }}米</b></p>
+                    <p><el-icon><Umbrella /></el-icon> 空位: <b style="color: #67c23a">{{ item.available }} 把</b></p>
+                    <p>
+                      <el-icon><Lock /></el-icon> 可达性:
+                      <el-tag v-if="item.reachable" type="success">可达</el-tag>
+                      <el-tag v-else type="info" effect="dark">不可达</el-tag>
+                    </p>
+                    <p>
+                      <el-icon><Medal /></el-icon> 综合得分: <b style="color: #409eff; font-size: 16px">{{ item.score.toFixed(1) }}</b>
+                    </p>
+
+                    <el-divider style="margin: 10px 0" />
+                    <div style="font-size: 12px; color: #909399">
+                      <div>打分详情:</div>
+                      <div v-for="(v, k) in item.factors" :key="k" style="margin-top: 4px">
+                        {{ factorLabels[k] }}: {{ v > 0 ? '+' : '' }}{{ v.toFixed(1) }}
+                      </div>
+                    </div>
+
+                    <el-button type="primary" size="small" style="width: 100%; margin-top: 10px" @click="selectStation(item.station)">
                       选择此站点
                     </el-button>
                   </el-card>
                 </el-col>
               </el-row>
+
+              <el-empty v-if="recommendedStations.length === 0" description="没有符合条件的可归还站点" />
             </div>
 
             <div v-else-if="form.fromStationId" class="recommend-box" style="border-color: #67c23a">
@@ -145,13 +191,14 @@
             <p><el-icon><Location /></el-icon> {{ s.location }}</p>
             <p><el-icon><Umbrella /></el-icon> 容量: {{ s.capacity }} 把</p>
             <p><el-icon><Checked /></el-icon> 已占用: {{ s.currentCount }} 把</p>
+            <p><el-icon><Place /></el-icon> 区域: <el-tag size="small">{{ s.area }}</el-tag></p>
             <p style="color: #909399; margin-top: 10px">
               空位: <b :style="{ color: (s.capacity - s.currentCount) === 0 ? '#f56c6c' : '#67c23a' }">
                 {{ s.capacity - s.currentCount }} 把
               </b>
             </p>
-            <el-progress 
-              :percentage="Math.round(s.currentCount / s.capacity * 100)" 
+            <el-progress
+              :percentage="Math.round(s.currentCount / s.capacity * 100)"
               :status="isFullStation(s.id) ? 'exception' : isAlmostFull(s.id) ? 'warning' : ''"
             />
           </el-card>
@@ -169,14 +216,28 @@ import { useUmbrellaStore } from '@/stores/umbrella'
 const store = useUmbrellaStore()
 
 const stations = computed(() => store.stations)
+const employees = computed(() => store.employees)
 const getStationById = (id) => store.getStationById(id)
-const borrowableUmbrellas = computed(() => 
+const getEmployeeById = (id) => store.getEmployeeById(id)
+const borrowableUmbrellas = computed(() =>
   store.umbrellas.filter(u => u.status === 'borrowed')
 )
 
-const form = ref({ fromStationId: 'S003', umbrellaId: '' })
+const form = ref({ fromStationId: 'S003', umbrellaId: '', employeeId: 'E001' })
 
 const fullStations = computed(() => stations.value.filter(s => isFullStation(s.id)))
+
+const currentEmployeeAreas = computed(() => {
+  const emp = getEmployeeById(form.value.employeeId)
+  return emp?.accessibleAreas || []
+})
+
+const factorLabels = {
+  reachable: '可达区域加分',
+  sameArea: '同区域加分',
+  slots: '空位加分',
+  distance: '距离扣分'
+}
 
 const isFullStation = (stationId) => {
   const s = getStationById(stationId)
@@ -191,16 +252,9 @@ const isAlmostFull = (stationId) => {
 }
 
 const recommendedStations = computed(() => {
-  if (!form.value.fromStationId) return []
-  const currentId = form.value.fromStationId
-  return stations.value
-    .filter(s => s.id !== currentId && !isFullStation(s.id))
-    .sort((a, b) => {
-      const distA = getDistance(a.id, currentId)
-      const distB = getDistance(b.id, currentId)
-      return distA - distB
-    })
-    .slice(0, 3)
+  if (!form.value.fromStationId || !form.value.employeeId) return []
+  const results = store.getRecommendReturnStations(form.value.fromStationId, form.value.employeeId)
+  return results.slice(0, 3)
 })
 
 const distanceMap = {
@@ -217,6 +271,10 @@ const getDistance = (s1, s2) => {
 }
 
 const onFromStationChange = () => {
+  form.value.umbrellaId = ''
+}
+
+const onEmployeeChange = () => {
   form.value.umbrellaId = ''
 }
 

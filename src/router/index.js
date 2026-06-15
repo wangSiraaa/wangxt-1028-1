@@ -36,6 +36,18 @@ const routes = [
     meta: { title: '天气预警', role: 'admin' }
   },
   {
+    path: '/activity-manage',
+    name: 'ActivityManage',
+    component: () => import('@/views/admin/ActivityManage.vue'),
+    meta: { title: '活动管理', role: 'admin' }
+  },
+  {
+    path: '/offline-sync',
+    name: 'OfflineSync',
+    component: () => import('@/views/common/OfflineSync.vue'),
+    meta: { title: '离线同步' }
+  },
+  {
     path: '/damage-register',
     name: 'DamageRegister',
     component: () => import('@/views/cleaner/DamageRegister.vue'),

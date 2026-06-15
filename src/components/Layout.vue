@@ -36,6 +36,14 @@
             <el-icon><Warning /></el-icon>
             <span>天气预警</span>
           </el-menu-item>
+          <el-menu-item index="/activity-manage">
+            <el-icon><Calendar /></el-icon>
+            <span>活动管理</span>
+          </el-menu-item>
+          <el-menu-item index="/offline-sync">
+            <el-icon><Connection /></el-icon>
+            <span>离线同步</span>
+          </el-menu-item>
         </template>
 
         <template v-if="currentUser.role === 'cleaner'">

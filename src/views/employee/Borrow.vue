@@ -12,7 +12,7 @@
             <el-icon><Sell /></el-icon>
             扫码借伞
           </h2>
-          
+
           <el-form :model="borrowForm" label-width="100px">
             <el-form-item label="当前用户">
               <el-tag size="large">{{ currentUser.name }}</el-tag>
@@ -23,24 +23,54 @@
             <el-form-item label="选择站点">
               <el-select v-model="borrowForm.stationId" placeholder="请选择站点" style="width: 100%" @change="onStationChange">
                 <el-option
-                  v-for="station in availableStations"
+                  v-for="station in allStations"
                   :key="station.id"
-                  :label="station.name + ' (可用: ' + (getAvailableUmbrellasByStation(station.id).length) + ')'"
+                  :label="station.name + ' (可用: ' + getAvailableUmbrellasByStation(station.id).length + ')' + (station.offline ? ' [离线]' : '')"
                   :value="station.id"
-                />
+                >
+                  <span>{{ station.name }} (可用: {{ getAvailableUmbrellasByStation(station.id).length }})</span>
+                  <el-tag v-if="station.offline" type="danger" size="small" style="margin-left: 8px">离线</el-tag>
+                  <el-tag v-if="station.weatherWarning" type="warning" size="small" style="margin-left: 8px">预警</el-tag>
+                </el-option>
               </el-select>
             </el-form-item>
+
+            <el-alert
+              v-if="selectedStationOffline"
+              title="该站点当前离线"
+              type="warning"
+              :closable="false"
+              show-icon
+              style="margin-bottom: 15px"
+            >
+              <template #default>
+                离线站点扫码借伞操作将缓存到本地，站点恢复在线后自动同步回放，不会丢单。
+              </template>
+            </el-alert>
+
+            <el-alert
+              v-if="selectedStationWarning"
+              :title="'该站点有暴雨预警，已保留应急库存'"
+              type="warning"
+              :closable="false"
+              show-icon
+              style="margin-bottom: 15px"
+            >
+              <template #default>
+                应急库存雨伞仅行政可调拨，普通员工无法借出。
+              </template>
+            </el-alert>
 
             <el-form-item label="选择雨伞" v-if="borrowForm.stationId">
               <el-radio-group v-model="borrowForm.umbrellaId">
                 <el-radio
-                  v-for="umbrella in stationUmbrellas"
+                  v-for="umbrella in stationAllUmbrellas"
                   :key="umbrella.id"
                   :value="umbrella.id"
                   :disabled="umbrella.status !== 'available'"
                   style="display: block; margin-bottom: 10px"
                 >
-                  <el-card shadow="hover" :class="{ 'disabled-card': umbrella.status !== 'available' }">
+                  <el-card shadow="hover" :class="getUmbrellaCardClass(umbrella)">
                     <div style="display: flex; align-items: center; gap: 15px">
                       <el-avatar :size="50" :style="{ backgroundColor: umbrella.color }">
                         <el-icon size="28"><Umbrella /></el-icon>
@@ -48,13 +78,21 @@
                       <div>
                         <div style="font-weight: 600">{{ umbrella.id }} - {{ umbrella.brand }}</div>
                         <div style="color: #909399; font-size: 12px">
-                          颜色: {{ umbrella.color }} | 
-                          <span :class="'status-tag status-' + umbrella.status">
-                            {{ getStatusText(umbrella.status) }}
-                          </span>
+                          颜色: {{ umbrella.color }} |
+                          <el-tag :type="getUmbrellaStatusType(umbrella.status)" size="small">
+                            {{ getUmbrellaStatusText(umbrella.status) }}
+                          </el-tag>
                         </div>
                         <div v-if="umbrella.status === 'damaged'" style="color: #f56c6c; font-size: 12px; margin-top: 4px">
                           破损原因: {{ umbrella.damageDesc }}
+                        </div>
+                        <div v-if="umbrella.status === 'emergency_reserve'" style="color: #f56c6c; font-size: 12px; margin-top: 4px">
+                          <el-icon><Warning /></el-icon>
+                          应急库存保留，仅行政可调拨
+                        </div>
+                        <div v-if="umbrella.status === 'activity_locked'" style="color: #e6a23c; font-size: 12px; margin-top: 4px">
+                          <el-icon><Lock /></el-icon>
+                          已被"{{ getActivityLockById(umbrella.lockId)?.activityName || '活动' }}"锁定，无法借出
                         </div>
                       </div>
                     </div>
@@ -67,12 +105,12 @@
               <el-button
                 type="primary"
                 size="large"
-                :disabled="!borrowCheck.can || !borrowForm.umbrellaId"
+                :disabled="!borrowForm.umbrellaId"
                 @click="handleBorrow"
                 style="width: 100%"
               >
                 <el-icon><Camera /></el-icon>
-                扫码借伞
+                {{ selectedStationOffline ? '离线扫码借伞' : '扫码借伞' }}
               </el-button>
             </el-form-item>
           </el-form>
@@ -84,18 +122,38 @@
             业务规则演示
           </h2>
           <el-alert
-            title="破损雨伞不可借"
+            title="应急库存拦截"
             type="error"
             :closable="false"
             style="margin-bottom: 10px"
           >
             <template #default>
-              雨伞U003(红色)状态为"已破损"，已被禁用，无法借出
+              暴雨预警站点S003的应急库存雨伞标记为emergency_reserve，普通员工无法借出，仅行政可调拨
+            </template>
+          </el-alert>
+          <el-alert
+            title="活动锁定拦截"
+            type="warning"
+            :closable="false"
+            style="margin-bottom: 10px"
+          >
+            <template #default>
+              活动锁定的雨伞标记为activity_locked，普通员工无法按平时规则借出，需行政批量分配
+            </template>
+          </el-alert>
+          <el-alert
+            title="离线借伞不丢单"
+            type="info"
+            :closable="false"
+            style="margin-bottom: 10px"
+          >
+            <template #default>
+              站点离线时扫码借伞操作缓存到本地，恢复在线后按时间顺序回放同步
             </template>
           </el-alert>
           <el-alert
             title="逾期/黑名单禁止借"
-            type="warning"
+            type="error"
             :closable="false"
             style="margin-bottom: 10px"
           >
@@ -113,7 +171,7 @@
             <el-icon><Goods /></el-icon>
             我要还伞
           </h2>
-          
+
           <el-table :data="myBorrowed" v-if="myBorrowed.length > 0" style="margin-bottom: 20px">
             <el-table-column prop="umbrellaId" label="雨伞编号" />
             <el-table-column prop="borrowTime" label="借出时间" />
@@ -140,9 +198,13 @@
             站点状态
           </h2>
           <el-row :gutter="10">
-            <el-col :span="12" v-for="station in stations" :key="station.id">
-              <el-card shadow="hover" style="margin-bottom: 10px">
-                <div style="font-weight: 600; margin-bottom: 8px">{{ station.name }}</div>
+            <el-col :span="12" v-for="station in allStations" :key="station.id">
+              <el-card shadow="hover" style="margin-bottom: 10px" :class="{ 'offline-station': station.offline }">
+                <div style="font-weight: 600; margin-bottom: 8px">
+                  {{ station.name }}
+                  <el-tag v-if="station.offline" type="danger" size="small" style="margin-left: 5px">离线</el-tag>
+                  <el-tag v-if="station.weatherWarning" type="warning" size="small" style="margin-left: 5px">预警</el-tag>
+                </div>
                 <div style="font-size: 12px; color: #909399; margin-bottom: 8px">{{ station.location }}</div>
                 <el-progress
                   :percentage="Math.round(station.currentCount / station.capacity * 100)"
@@ -150,6 +212,12 @@
                 />
                 <div style="text-align: center; margin-top: 8px; font-size: 12px">
                   {{ station.currentCount }} / {{ station.capacity }}
+                  <span v-if="getEmergencyCount(station.id) > 0" style="color: #f56c6c; margin-left: 5px">
+                    (应急{{ getEmergencyCount(station.id) }})
+                  </span>
+                  <span v-if="getActivityLockedCount(station.id) > 0" style="color: #e6a23c; margin-left: 5px">
+                    (锁定{{ getActivityLockedCount(station.id) }})
+                  </span>
                   <span v-if="station.currentCount >= station.capacity" style="color: #f56c6c; margin-left: 5px">(已满)</span>
                 </div>
               </el-card>
@@ -170,9 +238,9 @@
         <el-form-item label="归还站点">
           <el-select v-model="returnForm.stationId" placeholder="请选择归还站点" style="width: 100%">
             <el-option
-              v-for="station in stations"
+              v-for="station in allStations"
               :key="station.id"
-              :label="station.name + ' (剩余空位: ' + (station.capacity - station.currentCount) + ')'"
+              :label="station.name + ' (剩余空位: ' + (station.capacity - station.currentCount) + ')' + (station.offline ? ' [离线]' : '')"
               :value="station.id"
             />
           </el-select>
@@ -191,6 +259,7 @@
               :label="s.name"
             >
               {{ s.location }}，可还{{ s.available }}把
+              <el-tag v-if="!s.reachable" type="danger" size="small" style="margin-left: 5px">不可达</el-tag>
               <el-button type="primary" size="small" @click="returnForm.stationId = s.id" style="margin-left: 10px">选择</el-button>
             </el-descriptions-item>
           </el-descriptions>
@@ -212,44 +281,63 @@ import { useUmbrellaStore } from '@/stores/umbrella'
 const store = useUmbrellaStore()
 
 const currentUser = computed(() => store.currentUser)
-const stations = computed(() => store.stations)
-const availableStations = computed(() => store.stations.filter(s => s.currentCount > 0))
+const allStations = computed(() => store.stations)
 const activeWarning = computed(() => store.weatherWarnings.find(w => w.status === 'active'))
 const borrowCheck = computed(() => store.checkCanBorrow(currentUser.value.id))
 const myBorrowed = computed(() => store.getBorrowedByEmployee(currentUser.value.id))
 
 const borrowForm = ref({ stationId: '', umbrellaId: '' })
-const stationUmbrellas = ref([])
+const stationAllUmbrellas = ref([])
 const returnDialogVisible = ref(false)
 const returnForm = ref({ record: null, stationId: '' })
 const recommendStations = ref([])
 
 const getAvailableUmbrellasByStation = (stationId) => store.getAvailableUmbrellasByStation(stationId)
 const getStationById = (id) => store.getStationById(id)
+const getActivityLockById = (id) => store.getActivityLockById(id)
+const getUmbrellaStatusText = (s) => store.getUmbrellaStatusText(s)
+const getUmbrellaStatusType = (s) => store.getUmbrellaStatusType(s)
 
-const getStatusText = (status) => {
-  const map = {
-    available: '可借',
-    borrowed: '借出',
-    damaged: '破损',
-    in_repair: '维修中',
-    lost: '丢失'
-  }
-  return map[status] || status
+const selectedStationOffline = computed(() => {
+  if (!borrowForm.value.stationId) return false
+  return getStationById(borrowForm.value.stationId)?.offline || false
+})
+
+const selectedStationWarning = computed(() => {
+  if (!borrowForm.value.stationId) return false
+  const station = getStationById(borrowForm.value.stationId)
+  return station?.weatherWarning || false
+})
+
+const getEmergencyCount = (stationId) =>
+  store.umbrellas.filter(u => u.stationId === stationId && u.status === 'emergency_reserve').length
+
+const getActivityLockedCount = (stationId) =>
+  store.umbrellas.filter(u => u.stationId === stationId && u.status === 'activity_locked').length
+
+const getUmbrellaCardClass = (umbrella) => {
+  if (umbrella.status === 'available') return ''
+  if (umbrella.status === 'emergency_reserve') return 'emergency-card'
+  if (umbrella.status === 'activity_locked') return 'activity-card'
+  return 'disabled-card'
 }
 
 const onStationChange = (stationId) => {
   borrowForm.value.umbrellaId = ''
   const available = store.getAvailableUmbrellasByStation(stationId)
+  const emergency = store.umbrellas.filter(u => u.stationId === stationId && u.status === 'emergency_reserve')
+  const activityLocked = store.umbrellas.filter(u => u.stationId === stationId && u.status === 'activity_locked')
   const damaged = store.umbrellas.filter(u => u.stationId === stationId && u.status === 'damaged')
-  stationUmbrellas.value = [...available, ...damaged]
+  stationAllUmbrellas.value = [...available, ...emergency, ...activityLocked, ...damaged]
 }
 
 const handleBorrow = () => {
+  const isOffline = selectedStationOffline.value
   const result = store.borrowUmbrella(
     borrowForm.value.umbrellaId,
     currentUser.value.id,
-    borrowForm.value.stationId
+    borrowForm.value.stationId,
+    isOffline
   )
   if (result.success) {
     ElMessage.success(result.message)
@@ -282,7 +370,9 @@ watch(() => returnForm.value.stationId, (newVal) => {
 })
 
 const handleReturn = () => {
-  const result = store.returnUmbrella(returnForm.value.record.id, returnForm.value.stationId)
+  const station = getStationById(returnForm.value.stationId)
+  const isOffline = station?.offline || false
+  const result = store.returnUmbrella(returnForm.value.record.id, returnForm.value.stationId, isOffline)
   if (result.success) {
     ElMessage.success(result.message + (result.overdueFee > 0 ? `，逾期费${result.overdueFee}元` : ''))
     returnDialogVisible.value = false
@@ -309,5 +399,21 @@ const testOverdue = () => {
 .disabled-card {
   opacity: 0.5;
   background: #f5f7fa;
+}
+
+.emergency-card {
+  opacity: 0.6;
+  background: #fef0f0;
+  border: 1px dashed #f56c6c;
+}
+
+.activity-card {
+  opacity: 0.6;
+  background: #fdf6ec;
+  border: 1px dashed #e6a23c;
+}
+
+.offline-station {
+  border: 2px dashed #f56c6c;
 }
 </style>
